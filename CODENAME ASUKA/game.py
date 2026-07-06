@@ -11,9 +11,11 @@ pygame.mixer.init()
 
 font = pygame.font.Font(None, 36)
 sfx = {
-    "parry": pygame.mixer.Sound("powerUp1.wav"),
+    "parry": pygame.mixer.Sound("powerUp.wav"),
     "swing": pygame.mixer.Sound("pickupCoin.wav"),
-    "hit": pygame.mixer.Sound("hitHurt.wav")
+    "hit": pygame.mixer.Sound("hitHurt.wav"),
+    "beam": pygame.mixer.Sound("explosion.wav"),
+    "failedparry": pygame.mixer.Sound("explosion (1).wav")
 }
 
 for sound in sfx.values():
@@ -44,6 +46,8 @@ def load_spritesheet(filename, frame_w, frame_h, num_frames, scale_factor=8):
         frames.append(scaledframe)
     return frames
 
+beamframes = load_spritesheet("beam-Sheet.png", 8, 8, 3)
+
 class Player(pygame.sprite.Sprite):
     def __init__(self):
         super().__init__()
@@ -60,7 +64,7 @@ class Player(pygame.sprite.Sprite):
         self.rect.topleft = (320 , 600)
         self.x, self.y = 320, 570
         self.mask = pygame.mask.from_surface(self.hurtboxsurf)
-        self.hp = 100
+        self.hp = 10
         self.iframes = 0
 
     def update(self, controller, tick):
@@ -199,11 +203,11 @@ class Bullet(pygame.sprite.Sprite):
         self.rect.centery = int(self.posY)
         self.rect.centerx = int(self.posX)
         self.mask = pygame.mask.from_surface(self.image)
-        if self.bounce < 0:
-            if self.rect.right < 0 or self.rect.left > 704 or self.rect.top < 256 or self.rect.bottom > 704:
+        if self.bounce <= 0:
+            if self.rect.right <= 0 or self.rect.left > 704 or self.rect.top < 256 or self.rect.bottom > 704:
                     self.kill()
         else:
-            if self.rect.right < 0 or self.rect.left > 704:
+            if self.rect.right <= 0 or self.rect.left > 704:
                 self.angle += 90
                 self.velX *= -1
                 self.bounce -= 1
@@ -217,18 +221,51 @@ class Bullet(pygame.sprite.Sprite):
                 self.parried = False
 
 class Beam(pygame.sprite.Sprite):
-    def __init__(self, dir):
+    def __init__(self, x, y, delay, starttick, beamframes):
         super().__init__()
-        self.parriable = False
-        self.rawimage = pygame.image.load("beam.png").convert_alpha()
-        self.scaledimage = pygame.transform.scale_by(self.rawimage, 8.0)
-        if dir == "H":
-            self.image = pygame.transform.rotate(self.scaledimage, 90)
-        else:
-            self.image = self.scaledimage
-    def update(self):
-        pass
+        self.parriable = True
+        self.active = False
 
+        self.frames = beamframes
+        self.currentframe = 0
+        self.animtimer = 0
+        self.animspeed = 0.2
+
+        self.image = self.frames[self.currentframe]
+
+        self.rect = self.image.get_rect()
+        self.rect.center = (x, y)
+        self.mask = pygame.mask.from_surface(self.image)
+        self.delay = delay
+        self.alpha = 50
+        self.image.set_alpha(self.alpha)
+        self.lifetime = 0
+        self.starttick = starttick
+
+    def update(self, controller, tick):
+        self.animtimer += self.animspeed
+        if self.animtimer >= 1.0:
+            self.currentframe = (self.currentframe + 1) % len(self.frames)
+            self.image = self.frames[self.currentframe]
+            self.animtimer = 0
+
+        ticks_elapsed = tick - self.starttick
+        if ticks_elapsed >= self.delay and self.alpha <= 255 and self.lifetime == 0:
+            self.alpha += 15
+
+        if self.alpha >= 255 and self.lifetime < 20:
+            self.active = True
+            self.lifetime += 1
+
+        if self.lifetime >= 20:
+            self.active = False
+            self.alpha -= 10
+
+        if self.alpha <= 0:
+            self.kill()
+
+        self.image.set_alpha(self.alpha)
+        self.mask = pygame.mask.from_surface(self.image)
 
 class Boss(pygame.sprite.Sprite):
     def __init__(self, x=64, y=16):
@@ -244,15 +281,15 @@ class Boss(pygame.sprite.Sprite):
         self.rect.midtop = (704 // 2, 24)
         self.animtimer = 0
         self.animspeed = 0.1
+
     def update(self, controller, tick):
         self.animtimer += self.animspeed
         if self.animtimer >= 1.0:
             self.currentframe = (self.currentframe + 1) % len(self.frames)
             self.image = self.frames[self.currentframe]
             self.animtimer = 0
-
-
-
+ 
+beams = pygame.sprite.Group()
 bullets = pygame.sprite.Group()
 sprites = pygame.sprite.Group()
 player = Player()
@@ -265,16 +302,27 @@ tick = 0
 
 messages = []
 
+def Spawn_Beam(x, starttime):
+    elapsed = time.time() - starttime
+    for i in range(7):
+        beam = Beam(x, 292 + (i * 64), i * 4, tick, beamframes)
+        sprites.add(beam)
+        beams.add(beam)
+        sfx["beam"].play()
+
 while True:
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
             pygame.quit()
             sys.exit()
+# DEBUG SPAWNS
+    # if tick % 200 == 0:
+    #     bullet = Bullet(player.rect.centerx, 300, 0, 16, 0)
+    #     bullets.add(bullet)
+    #     sprites.add(bullet)
 
-    if tick % 200 == 0:
-        bullet = Bullet(player.rect.centerx, 300, 0, 16, 0)
-        bullets.add(bullet)
-        sprites.add(bullet)
+    # if tick % 200 == 0:
+    #     Spawn_Beam(player.rect.centerx, time.time())
 
     sprites.update(controller, tick)
 
@@ -284,11 +332,11 @@ while True:
     for b in bullets:
         if pygame.sprite.collide_mask(sword, b):
             if sword.isparrying and b.parriable and not b.parried:
+                sfx["swing"].stop()
                 sfx["parry"].play()
                 b.velY *= -1
                 b.velX *= -1
                 b.parried = True
-                b.bounce += 1
 
                 sword.angle = -15
                 sword.isparrying = False
@@ -307,16 +355,37 @@ while True:
             sfx["hit"].play()
             messages.append(("DAMAGE TAKEN!", tick + 60, (255, 0, 0)))
             player.iframes = 30
-            player.hp -= 5
-        
+            player.hp -= 1
+
+    for b in beams:
+        if pygame.sprite.collide_mask(sword, b):
+            if sword.isparrying:
+                sfx["swing"].stop()
+                sfx["failedparry"].play()
+
+                sword.angle = -15
+                sword.isparrying = False
+                sword.parry_cooldown = 120
+                sword.parrystart = 0
+                sword.justparried = True
+
+                player.iframes += 15
+                player.hp -= 1
+                messages.append(("PARRY OVERLOADED!", tick + 60, (200, 0, 0 )))        
+    for b in beams:
+        if pygame.sprite.collide_mask(player, b) and player.iframes <= 0 and b.active and not sword.justparried:
+
+            sfx["hit"].play()
+            messages.append(("DAMAGE TAKEN!", tick + 60, (255, 0, 0)))
+            player.iframes = 30
+            player.hp -= 3
 
     screen.fill((0, 0, 0))
-
 
     boss = font.render("TECHNO-VALKYRIE ASUKA, KEEPER OF ILLUSIONS", True, (255, 50, 50))
     screen.blit(boss, (window_width // 2 - boss.get_width() // 2, 10))
 
-    hud = font.render(f"HP: {player.hp}/100", True, (255, 255, 255))
+    hud = font.render(f"HP: {player.hp}/10", True, (255, 255, 255))
     screen.blit(hud, (window_width // 2 - hud.get_width() // 2, playfield_y + playfield_size + 15))
 
     start_y = 400
@@ -329,9 +398,8 @@ while True:
         for y in range(256, 704, 64):
             pygame.draw.rect(playfield, (0, 100, 0), (x, y, 64, 64), 1)
     
-    pygame.draw.rect(playfield, (0, 255, 0), (0, 256, 704, 448), 4)
     sprites.draw(playfield)
-
+    pygame.draw.rect(playfield, (0, 255, 0), (0, 256, 704, 448), 4)
     screen.blit(playfield, (playfield_x, playfield_y))
     
     pygame.display.flip()
