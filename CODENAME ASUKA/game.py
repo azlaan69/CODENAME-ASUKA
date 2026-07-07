@@ -61,7 +61,7 @@ class Player(pygame.sprite.Sprite):
 
         self.image = self.frames[self.currentframe]
         self.rect = self.image.get_rect()
-        self.rect.topleft = (320 , 600)
+        self.rect.center = (320 , 600)
         self.x, self.y = 320, 570
         self.mask = pygame.mask.from_surface(self.hurtboxsurf)
         self.hp = 10
@@ -82,7 +82,7 @@ class Player(pygame.sprite.Sprite):
             stick_x = controller.get_axis(0)
             stick_y = controller.get_axis(1)
             deadzone = 0.1
-            speed = 5
+            speed = 8
 
             if abs(stick_x) > deadzone:
                 self.x += stick_x * speed
@@ -181,7 +181,6 @@ class Sword(pygame.sprite.Sprite):
 class Bullet(pygame.sprite.Sprite):
     def __init__(self, x, y, velX, velY, bounceCount):
         super().__init__()
-        self.parriable = True
         self.parried = False
         self.rawimage = pygame.image.load("bullet.png").convert_alpha()
         self.scaledimage = pygame.transform.scale(self.rawimage, ((64, 64)))
@@ -223,7 +222,6 @@ class Bullet(pygame.sprite.Sprite):
 class Beam(pygame.sprite.Sprite):
     def __init__(self, x, y, delay, starttick, beamframes):
         super().__init__()
-        self.parriable = True
         self.active = False
 
         self.frames = beamframes
@@ -267,6 +265,95 @@ class Beam(pygame.sprite.Sprite):
         self.image.set_alpha(self.alpha)
         self.mask = pygame.mask.from_surface(self.image)
 
+class Clone(pygame.sprite.Sprite):
+    def __init__(self, x, y, left, player):
+        super().__init__()
+        self.player = player
+        self.parried = False
+        self.left = left
+
+        self.frames = load_spritesheet("clone.png", 8, 8, 2)
+        self.currentframe = 0
+        self.animtimer = 0
+        self.animspeed = 0.2
+
+        self.x = x
+        self.y = y
+
+        self.image = self.frames[self.currentframe]
+        self.rect = self.image.get_rect()
+        self.rect.center = (self.x, self.y)
+        self.mask = pygame.mask.from_surface(self.image)
+
+        self.counter = 1
+        self.firstdest = (player.rect.centerx - 160 if not self.left else player.rect.centerx + 228, player.rect.centery + 16)
+        self.seconddest = None
+        self.thirddest = None
+        self.hangtime = 0
+
+    def update(self, controller, tick):
+
+        self.animtimer += self.animspeed
+        if self.animtimer >= 1.0:
+            self.currentframe = (self.currentframe + 1) % len(self.frames)
+            self.image = self.frames[self.currentframe]
+            self.animtimer = 0
+
+        if self.hangtime > 0:
+            self.hangtime -= 1
+            if self.hangtime == 0:
+                self.parried = False
+                self.rect.center = (self.x, self.y)
+
+        if self.counter == 1:
+            targetpos = pygame.math.Vector2(self.firstdest)
+            currentpos = pygame.math.Vector2(self.x, self.y)
+
+        elif self.counter == 2:
+            targetpos = pygame.math.Vector2(self.seconddest)
+            currentpos = pygame.math.Vector2(self.x, self.y)
+
+        elif self.counter == 3:
+            targetpos = pygame.math.Vector2(self.thirddest)
+            currentpos = pygame.math.Vector2(self.x, self.y)
+
+        elif self.counter == 4:
+            targetpos = pygame.math.Vector2(self.player.rect.center)
+            currentpos = pygame.math.Vector2(self.x, self.y)
+
+        elif self.counter > 4:
+            targetpos = None
+            currentpos = None
+            self.kill()
+            return
+
+        collcheck = self.x < 1 or self.x > 704 or self.y < 256 or self.y > 704 
+
+        if self.counter < 5:
+            dir = targetpos - currentpos
+            distance = dir.length()
+            speed = 16
+
+            if distance > speed and self.hangtime == 0:
+                dir = dir.normalize()
+                currentpos += dir * speed
+                self.x, self.y = currentpos.x, currentpos.y
+
+            elif distance < speed or collcheck:
+                self.counter += 1
+                self.seconddest = (self.player.rect.centerx + 128 if not self.left else self.player.rect.centerx - 128, self.player.rect.centery - 128)
+                self.thirddest = (self.rect.centerx - 240 if not self.left else self.rect.centerx + 256, self.rect.centery)
+                self.hangtime = 5
+
+            elif self.parried:
+                self.counter += 1
+                self.seconddest = (self.player.rect.centerx + 128 if not self.left else self.player.rect.centerx - 128, self.player.rect.centery - 128)
+                self.thirddest = (self.rect.centerx - 240 if not self.left else self.rect.centerx + 256, self.rect.centery)
+                self.hangtime = 5
+
+        self.rect.center = (self.x, self.y)
+        self.mask = pygame.mask.from_surface(self.image)
+
 class Boss(pygame.sprite.Sprite):
     def __init__(self, x=64, y=16):
         super().__init__()
@@ -289,12 +376,17 @@ class Boss(pygame.sprite.Sprite):
             self.image = self.frames[self.currentframe]
             self.animtimer = 0
  
+clonespawncount = 0
+clones = pygame.sprite.Group()
 beams = pygame.sprite.Group()
 bullets = pygame.sprite.Group()
 sprites = pygame.sprite.Group()
+
 player = Player()
 sword = Sword(player)
+
 valkyrie = Boss(player)
+
 sprites.add(sword)
 sprites.add(player)
 sprites.add(valkyrie)
@@ -310,11 +402,22 @@ def Spawn_Beam(x, starttime):
         beams.add(beam)
         sfx["beam"].play()
 
+def Spawn_Clone():
+    global clonespawncount
+    if clonespawncount % 2 == 0:
+        clone = Clone(640, 192, False, player)
+    else:
+        clone = Clone(64, 192, True, player)
+    clonespawncount += 1
+    sprites.add(clone)
+    clones.add(clone)
+
 while True:
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
             pygame.quit()
             sys.exit()
+
 # DEBUG SPAWNS
     # if tick % 200 == 0:
     #     bullet = Bullet(player.rect.centerx, 300, 0, 16, 0)
@@ -324,6 +427,10 @@ while True:
     # if tick % 200 == 0:
     #     Spawn_Beam(player.rect.centerx, time.time())
 
+    if tick % 100 == 0 and len(clones) < 1:
+        Spawn_Clone()
+
+
     sprites.update(controller, tick)
 
     messages[:] = [m for m in messages if tick < m[1]]
@@ -331,7 +438,7 @@ while True:
 #  COLLISIONS
     for b in bullets:
         if pygame.sprite.collide_mask(sword, b):
-            if sword.isparrying and b.parriable and not b.parried:
+            if sword.isparrying and not b.parried:
                 sfx["swing"].stop()
                 sfx["parry"].play()
                 b.velY *= -1
@@ -346,8 +453,8 @@ while True:
 
                 player.iframes += 15
                 messages.append(("PERFECT PARRY!", tick + 60, (255, 255, 0)))
+                continue
 
-    for b in bullets:
         if pygame.sprite.collide_mask(player, b) and player.iframes <= 0:
             if b.parried:
                 continue
@@ -371,14 +478,41 @@ while True:
 
                 player.iframes += 15
                 player.hp -= 1
-                messages.append(("PARRY OVERLOADED!", tick + 60, (200, 0, 0 )))        
-    for b in beams:
+                messages.append(("PARRY OVERLOADED!", tick + 60, (200, 0, 0 ))) 
+                continue
+
         if pygame.sprite.collide_mask(player, b) and player.iframes <= 0 and b.active and not sword.justparried:
 
             sfx["hit"].play()
             messages.append(("DAMAGE TAKEN!", tick + 60, (255, 0, 0)))
             player.iframes = 30
             player.hp -= 3
+
+    for b in clones:
+        if pygame.sprite.collide_mask(sword, b):
+            if sword.isparrying and not b.parried:
+                sfx["swing"].stop()
+                sfx["parry"].play()
+                b.parried = True
+
+                sword.angle = -15
+                sword.isparrying = False
+                sword.parry_cooldown = 0
+                sword.parrystart = 0
+                sword.justparried = True
+
+                player.iframes += 15
+                messages.append(("PERFECT PARRY!", tick + 60, (255, 255, 0)))
+                continue
+
+        if pygame.sprite.collide_mask(player, b) and player.iframes <= 0:
+            if b.parried:
+                continue
+
+            sfx["hit"].play()
+            messages.append(("DAMAGE TAKEN!", tick + 60, (255, 0, 0)))
+            player.iframes = 30
+            player.hp -= 1
 
     screen.fill((0, 0, 0))
 
