@@ -10,6 +10,7 @@ pygame.mixer.pre_init(44100, -16, 2, 512)
 pygame.mixer.init()
 
 font = pygame.font.Font(None, 36)
+bigfont = pygame.font.Font(None, 300)
 sfx = {
     "parry": pygame.mixer.Sound("powerUp.wav"),
     "swing": pygame.mixer.Sound("pickupCoin.wav"),
@@ -35,6 +36,13 @@ playfield_y = (window_height - playfield_size) // 2
 
 clock = pygame.time.Clock()
 
+clonespawncount = 0
+drones = pygame.sprite.Group()
+clones = pygame.sprite.Group()
+beams = pygame.sprite.Group()
+bullets = pygame.sprite.Group()
+sprites = pygame.sprite.Group()
+
 def load_spritesheet(filename, frame_w, frame_h, num_frames, scale_factor=8):
     spritesheet = pygame.image.load(filename).convert_alpha()
     frames = []
@@ -51,7 +59,7 @@ beamframes = load_spritesheet("beam-Sheet.png", 8, 8, 3)
 class Player(pygame.sprite.Sprite):
     def __init__(self):
         super().__init__()
-        self.frames = load_spritesheet("player-Sheet.png", 8, 8, 3)
+        self.frames = load_spritesheet("player-Sheet.png", 8, 8, 2)
         self.currentframe = 0
         self.animtimer = 0
         self.animspeed = 0.05
@@ -62,7 +70,7 @@ class Player(pygame.sprite.Sprite):
         self.image = self.frames[self.currentframe]
         self.rect = self.image.get_rect()
         self.rect.center = (320 , 600)
-        self.x, self.y = 320, 570
+        self.x, self.y = 320, 576
         self.mask = pygame.mask.from_surface(self.hurtboxsurf)
         self.hp = 10
         self.iframes = 0
@@ -178,6 +186,48 @@ class Sword(pygame.sprite.Sprite):
         self.hitbox = pygame.mask.from_surface(self.hitboxsurf)
         self.rect.center = (self.player.rect.centerx + offset_x, self.player.rect.centery + offset_y)
 
+class MarkerDrone(pygame.sprite.Sprite):
+    def __init__(self, startx, endx, permtrack=False, speed=8):
+        super().__init__()
+        self.startpos = pygame.math.Vector2(startx, 230)
+        self.endpos = pygame.math.Vector2(endx, 230)
+        self.reached = False
+        self.speed = speed
+
+        self.rawimage = pygame.image.load("drone.png").convert_alpha()
+        self.image = pygame.transform.scale_by(self.rawimage, 8)
+        self.rect = self.image.get_rect()
+        self.rect.center = self.startpos
+
+        self.permtrack = permtrack
+
+    def update(self, controller, tick):
+
+        if self.permtrack:
+            self.endpos = pygame.math.Vector2(player.rect.centerx, 230)
+            self.reached = False
+
+        if not self.reached:
+            dir = self.endpos - self.startpos
+            distance = dir.length()
+
+            if distance > self.speed:
+                dir = dir.normalize()
+                self.startpos += dir * self.speed
+            else:
+                self.startpos = pygame.math.Vector2(self.endpos)
+                self.reached = True
+
+            self.rect.center = self.startpos
+
+        if self.rect.right > 704: self.rect.right = 704
+        if self.rect.left < 1: self.rect.left = 1
+
+
+    def shift(self, new_endx):
+        self.endpos = pygame.math.Vector2(new_endx, 230)
+        self.reached = False
+
 class Bullet(pygame.sprite.Sprite):
     def __init__(self, x, y, velX, velY, bounceCount):
         super().__init__()
@@ -195,6 +245,7 @@ class Bullet(pygame.sprite.Sprite):
         self.bounce = bounceCount
 
     def update(self, controller, tick):
+
         self.angle = math.degrees(math.atan2(-self.velY, self.velX)) - 90
         self.image = pygame.transform.rotate(self.scaledimage, self.angle)
         self.posX += self.velX
@@ -293,6 +344,8 @@ class Clone(pygame.sprite.Sprite):
 
     def update(self, controller, tick):
 
+        self.seconddest = (self.player.rect.centerx + 128 if not self.left else self.player.rect.centerx - 128, self.player.rect.centery - 128)
+
         self.animtimer += self.animspeed
         if self.animtimer >= 1.0:
             self.currentframe = (self.currentframe + 1) % len(self.frames)
@@ -341,58 +394,41 @@ class Clone(pygame.sprite.Sprite):
 
             elif distance < speed or collcheck:
                 self.counter += 1
-                self.seconddest = (self.player.rect.centerx + 128 if not self.left else self.player.rect.centerx - 128, self.player.rect.centery - 128)
-                self.thirddest = (self.rect.centerx - 240 if not self.left else self.rect.centerx + 256, self.rect.centery)
                 self.hangtime = 5
+                self.thirddest = (self.rect.centerx - 240 if not self.left else self.rect.centerx + 256, self.rect.centery)
+
 
             elif self.parried:
+                self.parried = False
                 self.counter += 1
-                self.seconddest = (self.player.rect.centerx + 128 if not self.left else self.player.rect.centerx - 128, self.player.rect.centery - 128)
-                self.thirddest = (self.rect.centerx - 240 if not self.left else self.rect.centerx + 256, self.rect.centery)
                 self.hangtime = 5
+                self.thirddest = (self.rect.centerx - 240 if not self.left else self.rect.centerx + 256, self.rect.centery)
+
 
         self.rect.center = (self.x, self.y)
         self.mask = pygame.mask.from_surface(self.image)
 
-class Boss(pygame.sprite.Sprite):
-    def __init__(self, x=64, y=16):
-        super().__init__()
-        self.frameW = 72
-        self.frameH = 24
+def Spawn_Bullet(SpawnCount, x, y, velX, velY, bounceCount):
+    for i in range(SpawnCount):
+        bullet = Bullet(x, y, velX, velY, bounceCount)
+        bullets.add(bullet)
+        sprites.add(bullet)
 
-        self.frames = load_spritesheet("valkyrie-Sheet.png", 72, 24, 4)
-        self.currentframe = 0
+def Spawn_TrackBullet(spawnX, spawnY, vel, bounceCount):
+    dx = player.rect.centerx - spawnX
+    dy = player.rect.centery - spawnY
 
-        self.image = self.frames[self.currentframe]
-        self.rect = self.image.get_rect()
-        self.rect.midtop = (704 // 2, 24)
-        self.animtimer = 0
-        self.animspeed = 0.1
+    angle = math.atan2(dx, dy)
 
-    def update(self, controller, tick):
-        self.animtimer += self.animspeed
-        if self.animtimer >= 1.0:
-            self.currentframe = (self.currentframe + 1) % len(self.frames)
-            self.image = self.frames[self.currentframe]
-            self.animtimer = 0
- 
-clonespawncount = 0
-clones = pygame.sprite.Group()
-beams = pygame.sprite.Group()
-bullets = pygame.sprite.Group()
-sprites = pygame.sprite.Group()
+    velX = math.sin(angle) * vel
+    velY = math.cos(angle) * vel
 
-player = Player()
-sword = Sword(player)
+    bullet = Bullet(spawnX, spawnY, velX, velY, bounceCount)
+    bullets.add(bullet)
+    sprites.add(bullet)
 
-valkyrie = Boss(player)
+    bullet.update(controller, tick)
 
-sprites.add(sword)
-sprites.add(player)
-sprites.add(valkyrie)
-tick = 0
-
-messages = []
 
 def Spawn_Beam(x, starttime):
     elapsed = time.time() - starttime
@@ -412,6 +448,260 @@ def Spawn_Clone():
     sprites.add(clone)
     clones.add(clone)
 
+def Spawn_Drones(end1, end2=False, permtrack=False, group=None, speed=8): #64, 640 are the edges
+    if not end2:
+        drone1 = MarkerDrone(352, end1, permtrack, speed)
+        drones.add(drone1)
+        sprites.add(drone1)
+    else:
+        drone1 = MarkerDrone(352, end1, permtrack, speed)
+        drones.add(drone1)
+        sprites.add(drone1)
+
+        drone2 = MarkerDrone(352, end2, permtrack, speed)
+        drones.add(drone2)
+        sprites.add(drone2)
+
+    if group is not None:
+        group.add(drone1)
+        if end2: group.add(drone2)
+
+class Boss(pygame.sprite.Sprite):
+    def __init__(self, x=64, y=16):
+        super().__init__()
+        self.frameW = 72
+        self.frameH = 24
+
+        self.frames = load_spritesheet("valkyrie-Sheet.png", 72, 24, 4)
+        self.currentframe = 0
+
+        self.image = self.frames[self.currentframe]
+        self.rect = self.image.get_rect()
+        self.rect.midtop = (704 // 2, 24)
+        self.animtimer = 0
+        self.animspeed = 0.1
+
+        self.combos = [""]
+        self.patterns = {
+        "AreaDenial" : 0,
+        "ParryCheck" : 0,
+        "CloneHell" : 0
+        }
+
+        self.currentpattern = "IDLE"
+        self.cooldown = 60
+        self.attackstage = 1
+        self.stagetimer = 0
+
+        self.sidedrones = pygame.sprite.Group()
+        self.maindrones = pygame.sprite.Group()
+        self.isfiring = False
+
+    def update(self, controller, tick):
+
+        self.animtimer += self.animspeed
+        if self.animtimer >= 1.0:
+            self.currentframe = (self.currentframe + 1) % len(self.frames)
+            self.image = self.frames[self.currentframe]
+            self.animtimer = 0
+
+        if self.currentpattern == "IDLE":
+            if self.cooldown > 0:
+                self.cooldown -= 1
+            else:
+                self.availablepatterns = ["AreaDenial", "CloneHell", "ParryCheck"] # AreaDenial, ParryCheck, CloneHell
+
+                bias = {p: self.patterns[p] for p in self.availablepatterns}
+                bias["CloneHell"] -= 2
+                minuse = min(self.patterns[p] for p in self.availablepatterns)
+                leastused = [p for p in self.availablepatterns if self.patterns[p] == minuse]
+
+                self.currentpattern = random.choice(leastused)
+                self.patterns[self.currentpattern] += 1
+                self.patterntimer = 0
+
+        if self.currentpattern != "IDLE":
+
+            if self.currentpattern == "AreaDenial":
+
+                if self.attackstage == 1: # amuse-bouche
+                    self.maindrones.empty()
+                    self.sidedrones.empty()    
+                    for d in drones: d.kill()
+
+                    Spawn_Drones(192, 512, group = self.maindrones, permtrack = False, speed = 8)
+                    self.attackstage = 2
+                    self.stagetimer = 60
+
+                def soup1():
+                    for d in self.maindrones:
+                        Spawn_Beam(d.rect.centerx, time.time())
+                    Spawn_Drones(64, 640, group = self.sidedrones, permtrack = False, speed = 8) 
+
+                def soup2():
+                    for d in self.sidedrones:
+                        Spawn_Beam(d.rect.centerx, time.time())
+
+
+                def soup():
+                    for d in drones:
+                        Spawn_Beam(d.rect.centerx, time.time())
+
+                def shift():
+                    for num, d in enumerate(drones):
+                        shiftval = None
+                        if num == 0: shiftval = 320-32
+                        if num == 1: shiftval = 384+32 
+                        if num == 2: shiftval = 192-32
+                        if num == 3: shiftval = 512+32
+
+                        d.shift(shiftval) 
+
+                def appetizer():
+                    Spawn_Bullet(1, 64, 64+256, 16, 16, 4)
+                    Spawn_Bullet(1, 64, 640, 16, -16, 4)
+                    Spawn_Bullet(1, 640, 64+256, -16, 16, 4)
+                    Spawn_Bullet(1, 640, 640, -16, -16, 4) 
+
+                    Spawn_Bullet(1, 1, 480, 24, 0, 4)
+                    Spawn_Bullet(1, 703, 480, -24, 0, 4)
+                    Spawn_Bullet(1, 352, 290, 0, 24, 4)
+                    Spawn_Bullet(1, 352, 670, -0, -24, 4)
+                 
+                self.exec(2, 45, soup1)
+                self.exec(3, 45, soup2)
+                self.exec(4, 60, appetizer)
+                self.exec(5, 45, soup)
+                self.exec(6, 45, shift)
+                self.exec(7, 45, soup)
+                self.exec(8, 45, appetizer)
+                self.exec(9, 120, "kill")
+
+            if self.currentpattern == "ParryCheck":
+
+                if self.isfiring == True:
+                        if tick % 12 == 0:
+                            for d in drones:
+                                Spawn_Bullet(1, d.rect.centerx, 290, 0, 16, 0)
+
+                def appetizer():
+
+                    if len(drones) > 1: d.kill()
+                    elif len(drones) < 1: Spawn_Drones(player.rect.x+32, permtrack=True)
+                    Spawn_Clone()
+
+                def seafood():
+                    xpos = 1
+                    for i in range(11):
+                        Spawn_Bullet(1, xpos, 290, 0, 16, 0)
+                        xpos += 64
+
+                def intermizzo():
+                    for d in drones:
+                        Spawn_Beam(d.rect.centerx, time.time())
+
+                if 2 <= self.attackstage <= 3: # soup
+                    self.isfiring = True
+                else:
+                    self.isfiring = False
+
+                self.exec(1, 30, appetizer)
+                self.exec(2, 30, "pause")
+                self.exec(3, 30, appetizer )
+                self.exec(4, 30, seafood)
+                self.exec(5, 60, intermizzo)
+                self.exec(6, 60, intermizzo)
+                self.exec(7, 30, appetizer)
+                self.exec(8, 30, appetizer)
+                self.exec(9, 60, "kill", False)
+
+            if self.currentpattern == "CloneHell":
+
+                if self.isfiring == True:
+                    if tick % 12 == 0:
+                        Spawn_TrackBullet(640, 290, 16, 0)
+                    elif tick % 6 == 0:
+                        Spawn_TrackBullet(64, 290, 16, 0)
+                        
+
+                self.isfiring = True if 3 >= self.attackstage > 2 else False
+
+                self.exec(1, 90, lambda: [Spawn_Clone(), Spawn_Clone()])
+                self.exec(2, 30, "pause")
+                self.exec(3, 30, "beam")
+                self.exec(4, 30, lambda: [Spawn_Clone(), Spawn_Clone()])
+                self.exec(5, 30, "kill")
+
+
+
+
+    def exec(self, neededstage, cooldown, actionfunc, killperm=True):
+        if self.attackstage == neededstage:
+            if self.stagetimer > 0:
+                self.stagetimer -= 1
+            else:
+                if actionfunc == "kill":
+                    if killperm:
+                        for d in drones: d.kill()
+                    self.currentpattern = "IDLE"
+                    self.attackstage = 1
+                elif actionfunc == "pause":
+                    self.attackstage += 1
+                    self.stagetimer = cooldown
+                elif actionfunc == "beam":
+                    Spawn_Beam(player.rect.centerx, time.time())
+                    self.attackstage += 1
+                    self.stagetimer = cooldown             
+                else:
+                    actionfunc()
+                    self.attackstage += 1
+                    self.stagetimer = cooldown
+
+class Style:
+    def __init__(self):
+        self.rank = "D"
+        self.points = 0
+        self.decay = 0
+        self.remmultiplier = 0.5
+        self.thresholds = {
+        "D": 0,
+        "C": 1200,
+        "B": 2500,
+        "A": 5000,
+        "S": 15000
+        }
+    def add(self, amount):
+        self.points += amount
+        self.decay = 0
+    def rem(self, amount=1.0):
+        penalty = self.remmultiplier * amount
+        self.points *= (1.0 - penalty)
+    def update(self, boss, player, sword):
+        if self.points > 0 and boss.currentpattern != "IDLE": self.decay += 1
+        if self.decay >= 180: self.points -= 5
+
+        for rank, threshold in self.thresholds.items():
+            if self.points > threshold:
+                self.rank = rank
+
+        if self.points > 5000:
+            if tick % 200 == 0 and player.hp < 10: player.hp += 1
+            sword.parry_cooldown = 0
+            self.remmultiplier = 0.25
+
+player = Player()
+sword = Sword(player)
+style = Style()
+
+valkyrie = Boss(x=352, y=16)
+
+sprites.add(sword)
+sprites.add(player)
+sprites.add(valkyrie)
+tick = 0
+
+messages = []
+
 while True:
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
@@ -427,11 +717,14 @@ while True:
     # if tick % 200 == 0:
     #     Spawn_Beam(player.rect.centerx, time.time())
 
-    if tick % 100 == 0 and len(clones) < 1:
-        Spawn_Clone()
+    # if tick % 100 == 0 and len(clones) < 1:
+    #     Spawn_Clone()
 
+    # if tick % 100 == 0 and len(clones) < 1:
+    #     Spawn_Drones()
 
     sprites.update(controller, tick)
+    style.update(valkyrie, player, sword)
 
     messages[:] = [m for m in messages if tick < m[1]]
 
@@ -450,6 +743,7 @@ while True:
                 sword.parry_cooldown = 0
                 sword.parrystart = 0
                 sword.justparried = True
+                style.add(150)
 
                 player.iframes += 15
                 messages.append(("PERFECT PARRY!", tick + 60, (255, 255, 0)))
@@ -461,14 +755,29 @@ while True:
 
             sfx["hit"].play()
             messages.append(("DAMAGE TAKEN!", tick + 60, (255, 0, 0)))
+            style.rem(1.6)
             player.iframes = 30
             player.hp -= 1
 
     for b in beams:
         if pygame.sprite.collide_mask(sword, b):
-            if sword.isparrying:
-                sfx["swing"].stop()
-                sfx["failedparry"].play()
+            if sword.isparrying and b.active:
+                if not style.points > 15000:
+                    sfx["swing"].stop()
+                    sfx["failedparry"].play()
+                    style.add(75)
+                    messages.append(("PARRY OVERLOADED!", tick + 60, (200, 0, 0 ))) 
+                    player.hp -= 1
+                    player.iframes += 15
+
+                else:
+                    sfx["swing"].stop()
+                    sfx["parry"].play()
+                    style.add(250)
+                    messages.append(("DARING PARRY!", tick + 60, (255, 0, 255)))
+                    player.hp += 1
+                    player.iframes += 30
+                    b.active = False
 
                 sword.angle = -15
                 sword.isparrying = False
@@ -476,15 +785,13 @@ while True:
                 sword.parrystart = 0
                 sword.justparried = True
 
-                player.iframes += 15
-                player.hp -= 1
-                messages.append(("PARRY OVERLOADED!", tick + 60, (200, 0, 0 ))) 
                 continue
 
         if pygame.sprite.collide_mask(player, b) and player.iframes <= 0 and b.active and not sword.justparried:
 
             sfx["hit"].play()
             messages.append(("DAMAGE TAKEN!", tick + 60, (255, 0, 0)))
+            style.rem()
             player.iframes = 30
             player.hp -= 3
 
@@ -500,6 +807,7 @@ while True:
                 sword.parry_cooldown = 0
                 sword.parrystart = 0
                 sword.justparried = True
+                style.add(250)
 
                 player.iframes += 15
                 messages.append(("PERFECT PARRY!", tick + 60, (255, 255, 0)))
@@ -511,12 +819,13 @@ while True:
 
             sfx["hit"].play()
             messages.append(("DAMAGE TAKEN!", tick + 60, (255, 0, 0)))
+            style.rem()
             player.iframes = 30
             player.hp -= 1
 
     screen.fill((0, 0, 0))
 
-    boss = font.render("TECHNO-VALKYRIE ASUKA, KEEPER OF ILLUSIONS", True, (255, 50, 50))
+    boss = font.render("TECHNO-VALKYRIE ASUKA, THE LAST TYRANT", True, (255, 50, 50))
     screen.blit(boss, (window_width // 2 - boss.get_width() // 2, 10))
 
     hud = font.render(f"HP: {player.hp}/10", True, (255, 255, 255))
@@ -526,6 +835,12 @@ while True:
     for idx, (text_str, decay, color) in enumerate(messages):
         message = font.render(text_str, True, color)
         screen.blit(message, (1100, start_y + (idx * 40)))
+
+    stylecount = font.render(f"STYLE: {int(style.points)}", True, (255, 255, 255))
+    stylerank = bigfont.render(style.rank, True, (255, 0, 0))
+
+    screen.blit(stylecount, (1100, 300))
+    screen.blit(stylerank, (1100, 100))
 
     playfield.fill((0, 0, 0)) 
     for x in range(0, 704, 64):
@@ -538,5 +853,4 @@ while True:
     
     pygame.display.flip()
     tick += 1
-    print(f"cooldown: {sword.parry_cooldown} | vel: {controller.get_axis(0), controller.get_axis(1)} | tick: {tick} | {valkyrie.animtimer}")
     clock.tick(60)
