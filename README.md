@@ -1,5 +1,6 @@
 # CODENAME-ASUKA - A PARRY-BASED BULLET HELL
 Danmaku (bullet hell) inspired by ULTRAKILL, Undertale, and everything Fromsoft.
+- RELEASED ON ITCH.IO NOW: https://azlaannn.itch.io/codename-asuka
 
 # FEATURES (COMPLETED):
 - Deflective Parrying Mechanic
