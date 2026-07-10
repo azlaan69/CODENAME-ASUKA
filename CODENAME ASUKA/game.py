@@ -108,12 +108,6 @@ class Player(pygame.sprite.Sprite):
             if abs(stick_y) > deadzone:
                 self.y += stick_y * speed
 
-            if self.x < 4: self.x = 4
-            elif self.x > 640: self.x = 640
-            
-            if self.y < 256: self.y = 256
-            elif self.y > 640: self.y = 640
-
         keys = pygame.key.get_pressed()
         if keys[pygame.K_a]: move_x = -1
         if keys[pygame.K_d]: move_x = 1
@@ -124,6 +118,12 @@ class Player(pygame.sprite.Sprite):
         if move_vec.length() > 1.0: move_vec.normalize_ip()
         self.x += move_vec.x * speed
         self.y += move_vec.y * speed
+
+        if self.x < 4: self.x = 4
+        elif self.x > 640: self.x = 640
+        
+        if self.y < 256: self.y = 256
+        elif self.y > 640: self.y = 640
 
 
         self.rect.x = int(self.x)
@@ -925,6 +925,13 @@ while True:
             sprites.add(valkyrie)
             tick = 0
             gamestate = "RUNNING"
+            style.rank = "D"
+            style.rankcolor = (100, 100, 255)
+            style.points = 0
+            style.decay = 0
+            style.remmultiplier = 0.5
+            style.cooldown = 0
+            style.addmultiplier = 1.0
 
     elif gamestate == "RUNNING":
 
